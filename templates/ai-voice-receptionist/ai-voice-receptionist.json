@@ -1,0 +1,1445 @@
+{
+  "name": "AI Voice Receptionist",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-receptionist",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "aa4006d0-fde7-48d1-bf89-459dbc7cf60e",
+      "name": "Call Comes In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "45ce702e-a6aa-4294-8cb8-bb4e4f8b9e34"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d79073b9-85ec-462c-811c-ededc39ac34c",
+              "name": "businessName",
+              "value": "Your Business Name",
+              "type": "string"
+            },
+            {
+              "id": "d2711c7b-59d8-4a53-ab1a-39cf0f5a2f68",
+              "name": "timezone",
+              "value": "America/New_York",
+              "type": "string"
+            },
+            {
+              "id": "39bbf728-7712-4e5f-9a14-4ce3071c24a9",
+              "name": "openDays",
+              "value": "Mon,Tue,Wed,Thu,Fri,Sat",
+              "type": "string"
+            },
+            {
+              "id": "63b71291-a107-42a2-8585-686c9ff807c3",
+              "name": "openTime",
+              "value": "09:00",
+              "type": "string"
+            },
+            {
+              "id": "5d8a6e0f-237c-4608-a667-eac6e350ec49",
+              "name": "closeTime",
+              "value": "17:00",
+              "type": "string"
+            },
+            {
+              "id": "8c2d1776-76f9-4c1c-8025-bdbb5930cbee",
+              "name": "appointmentMinutes",
+              "value": 30,
+              "type": "number"
+            },
+            {
+              "id": "9f9ba8b3-bc2d-49c9-a2a3-eedc313223a6",
+              "name": "minimumNoticeMinutes",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "beb347f8-ef14-431f-878c-de336a57a878",
+              "name": "daysToSearch",
+              "value": 7,
+              "type": "number"
+            },
+            {
+              "id": "e77c0a6b-b9dc-479f-b337-5e7ceb44c865",
+              "name": "calendarId",
+              "value": "you@yourbusiness.com",
+              "type": "string"
+            },
+            {
+              "id": "4faff4a0-4b61-4914-b710-cdaf72f3de5c",
+              "name": "ownerEmail",
+              "value": "you@yourbusiness.com",
+              "type": "string"
+            },
+            {
+              "id": "90cb9d3d-654c-4e33-9c20-66896363461a",
+              "name": "secretKey",
+              "value": "CHANGE-ME-to-a-long-random-string",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "27d14cac-2a50-4e3e-b11d-527c4c72e755",
+      "name": "Your Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads a request from any voice platform and turns it into { platform, action, args }.\n// Vapi tool calls, Vapi end-of-call reports, Retell custom functions and call events, ElevenLabs server tools\n// (put ?action=... on the tool URL) and ElevenLabs post-call webhooks, or a plain { \"action\": ..., ... } POST.\nconst s = $('Your Settings').first().json;\nconst req = $('Call Comes In').first().json;\nconst body = req.body || {};\nconst q = req.query || {};\nconst h = req.headers || {};\nconst parseArgs = (a) => { if (!a) return {}; if (typeof a === 'string') { try { return JSON.parse(a); } catch (e) { return {}; } } return a; };\nlet platform = 'generic', toolCallId = '', action = '', args = {};\nconst m = body.message || {};\nif (m.type === 'tool-calls' || m.toolCallList || m.toolCalls) {\n  platform = 'vapi';\n  const call = (m.toolCallList || m.toolCalls || [])[0] || {};\n  toolCallId = call.id || '';\n  action = (call.function && call.function.name) || call.name || '';\n  args = parseArgs((call.function && call.function.arguments) || call.arguments || call.parameters);\n} else if (m.type === 'end-of-call-report') {\n  platform = 'vapi'; action = 'call_summary';\n  const cust = m.customer || (m.call && m.call.customer) || {};\n  args = { summary: m.summary || (m.analysis && m.analysis.summary) || '', transcript: m.transcript || '', caller: cust.number || '', durationSeconds: m.durationSeconds || '' };\n} else if (body.event === 'call_ended' || body.event === 'call_analyzed') {\n  platform = 'retell'; action = 'call_summary';\n  const c = body.call || {};\n  args = { summary: (c.call_analysis && c.call_analysis.call_summary) || '', transcript: c.transcript || '', caller: c.from_number || '', durationSeconds: c.duration_ms ? Math.round(c.duration_ms / 1000) : '' };\n} else if (typeof body.name === 'string' && body.args !== undefined) {\n  platform = 'retell'; action = body.name; args = parseArgs(body.args);\n} else if (body.type === 'post_call_transcription') {\n  platform = 'elevenlabs'; action = 'call_summary';\n  const d = body.data || {}, md = d.metadata || {};\n  args = { summary: (d.analysis && d.analysis.transcript_summary) || '',\n           transcript: Array.isArray(d.transcript) ? d.transcript.map(t => `${t.role}: ${t.message}`).join('\\n') : '',\n           caller: (md.phone_call && md.phone_call.external_number) || '', durationSeconds: md.call_duration_secs || '' };\n} else {\n  platform = q.action ? 'elevenlabs' : 'generic';\n  action = String(q.action || body.action || body.tool || '');\n  args = { ...body }; delete args.action; delete args.tool;\n}\naction = String(action).toLowerCase().replace(/[^a-z_]/g, '');\nconst secret = String(s.secretKey || '').trim();\nconst given = String(h['x-receptionist-key'] || q.key || '').trim();\nreturn [{ json: { platform, toolCallId, action, args: args || {}, authorized: !secret || given === secret } }];\n"
+      },
+      "id": "28d62ce0-c395-4a40-96c4-1e96a8a01d86",
+      "name": "Read The Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7e8b44c8-6af3-4a48-af6a-a7dbf27e1cec",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "82920c71-1580-4b47-9b49-50f2adc4d7b9",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"error\": \"missing or wrong x-receptionist-key\"}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "883721fc-4660-4aea-85b4-ac66984d17ac",
+      "name": "Reply: Not Allowed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "90869d87-897f-4b47-af22-d2cf240322ac",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "check_availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Check or book"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "4821af27-9f80-4722-9b5b-15ec2c05daba",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "book_appointment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Book"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "352f9fd2-16b0-471b-a912-367dbe2bb133",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "take_message",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Message"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "19aae562-e5ac-4c88-9433-f5223271caef",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "call_summary",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Call ended"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Anything else"
+        }
+      },
+      "id": "6a4bcce4-251e-4788-bf8f-ad3b6d90e870",
+      "name": "What Do They Want?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        960,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Works out which days to read from the calendar: the requested day (or today) plus the next week,\n// so one calendar read can answer \"what's free\" and \"book this time\" without a second lookup.\nconst s = $('Your Settings').first().json;\nconst r = $('Read The Request').first().json;\nconst tz = s.timezone || 'America/New_York';\nconst now = DateTime.now().setZone(tz);\nconst raw = String(r.args.date || r.args.day || (r.args.start || '').slice(0, 10) || '').trim();\nlet day = now.startOf('day');\nif (/^\\d{4}-\\d{2}-\\d{2}/.test(raw)) { const d = DateTime.fromISO(raw.slice(0, 10), { zone: tz }); if (d.isValid) day = d.startOf('day'); }\nelse if (/tomorrow/i.test(raw)) day = now.plus({ days: 1 }).startOf('day');\nconst pastAsked = day < now.startOf('day') ? day.toFormat('LLLL d') : '';      // remember it, to say so\nif (pastAsked) day = now.startOf('day');                                       // never look into the past\nconst ahead = Math.max(1, Math.min(30, parseInt(s.daysToSearch, 10) || 7));\nreturn [{ json: { windowStart: day.toISO(), windowEnd: day.plus({ days: ahead }).endOf('day').toISO(), requestedDay: day.toISODate(), pastAsked } }];\n"
+      },
+      "id": "d12887e7-ffc2-4535-b64a-9c12251cf852",
+      "name": "Plan The Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Your Settings').first().json.calendarId }}"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "f5511d85-ca32-41ee-b46a-dc00fffab5af",
+      "name": "Read Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "position": [
+        1440,
+        -112
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Finds the free slots in the calendar and, for a booking, checks the requested time is open.\n// Busy = any event that is not cancelled and not marked \"free\". All-day events block the whole day.\nconst s = $('Your Settings').first().json;\nconst r = $('Read The Request').first().json;\nconst plan = $('Plan The Search').first().json;\nconst tz = s.timezone || 'America/New_York';\nconst slotMin = Math.max(10, parseInt(s.appointmentMinutes, 10) || 30);\nconst notice = Math.max(0, parseInt(s.minimumNoticeMinutes, 10) || 60);\nconst openDays = String(s.openDays || 'Mon,Tue,Wed,Thu,Fri').split(',').map(x => x.trim().slice(0, 3).toLowerCase());\nconst hm = (t, d) => { const m = String(t || d).match(/(\\d{1,2}):(\\d{2})/); return m ? [Number(m[1]), Number(m[2])] : hm(d, d); };\nconst [oh, om] = hm(s.openTime, '09:00'), [ch, cm] = hm(s.closeTime, '17:00');\nconst now = DateTime.now().setZone(tz);\nconst busy = $input.all().map(i => i.json)\n  .filter(e => e && e.start && e.status !== 'cancelled' && e.transparency !== 'transparent')\n  .map(e => ({ s: DateTime.fromISO(e.start.dateTime || e.start.date, { zone: tz }), e: DateTime.fromISO(e.end.dateTime || e.end.date, { zone: tz }) }))\n  .filter(b => b.s.isValid && b.e.isValid);\nconst isFree = (st, en) => !busy.some(b => st < b.e && en > b.s);\nconst isOpenDay = (d) => openDays.includes(d.toFormat('ccc').toLowerCase());\nconst inHours = (st, en) => { const o = st.set({ hour: oh, minute: om, second: 0, millisecond: 0 }), c = st.set({ hour: ch, minute: cm, second: 0, millisecond: 0 }); return st >= o && en <= c; };\nconst say = (d) => d.toFormat('h:mm a').replace(':00', '');\nconst sayDay = (d) => d.hasSame(now, 'day') ? 'today' : d.hasSame(now.plus({ days: 1 }), 'day') ? 'tomorrow' : d.toFormat('cccc, LLLL d');\nconst slotsOn = (day) => {\n  if (!isOpenDay(day)) return [];\n  const out = [];\n  for (let st = day.set({ hour: oh, minute: om, second: 0, millisecond: 0 }); ; st = st.plus({ minutes: slotMin })) {\n    const en = st.plus({ minutes: slotMin });\n    if (!inHours(st, en)) break;\n    if (st >= now.plus({ minutes: notice }) && isFree(st, en)) out.push(st);\n  }\n  return out;\n};\nconst first = DateTime.fromISO(plan.windowStart, { zone: tz }).startOf('day');\nconst last = DateTime.fromISO(plan.windowEnd, { zone: tz });\nconst nextOpenings = () => { for (let d = first; d <= last; d = d.plus({ days: 1 })) { const sl = slotsOn(d); if (sl.length) return { day: d, slots: sl }; } return null; };\n\nif (r.action === 'check_availability') {\n  const asked = slotsOn(first), found = asked.length ? { day: first, slots: asked } : nextOpenings();\n  if (!found) return [{ json: { bookOk: false, speak: `I'm sorry, there are no openings in the next ${s.daysToSearch || 7} days. I can take a message and have the team call you back.` } }];\n  const pick = found.slots.length <= 5 ? found.slots : [0, 1, 2, 3, 4].map(i => found.slots[Math.floor(i * (found.slots.length - 1) / 4)]);\n  const lead = plan.pastAsked ? `${plan.pastAsked} has already passed. ` : (asked.length || !String(r.args.date || r.args.day || '').trim() ? '' : `${sayDay(first)} is fully booked. `);\n  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);\n  return [{ json: { bookOk: false, slots: pick.map(x => x.toISO()), speak: `${lead}${cap(sayDay(found.day))} I have ${pick.map(say).join(', ').replace(/, ([^,]*)$/, ' or $1')}. Which works best?` } }];\n}\n\n// book_appointment\nconst a = r.args, name = String(a.name || a.customer_name || '').trim(), phone = String(a.phone || a.phone_number || '').trim();\nconst email = String(a.email || '').trim().toLowerCase(), service = String(a.service || a.reason || 'Appointment').trim();\nif (!name) return [{ json: { bookOk: false, speak: 'Before I book it, may I have your name?' } }];\nif (!phone && !email) return [{ json: { bookOk: false, speak: 'What is the best phone number to reach you?' } }];\nif (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) return [{ json: { bookOk: false, speak: 'That email did not look right. Could you spell it for me?' } }];\nlet st = a.start ? DateTime.fromISO(String(a.start), { zone: tz }) : DateTime.fromISO(`${a.date}T${String(a.time || '').padStart(5, '0')}`, { zone: tz });\nif (!st.isValid) return [{ json: { bookOk: false, speak: 'What day and time would you like?' } }];\nst = st.setZone(tz);\nconst en = st.plus({ minutes: slotMin });\nconst sameDay = slotsOn(st.startOf('day'));\nconst alt = () => { const o = sameDay.length ? { day: st.startOf('day'), slots: sameDay } : nextOpenings(); return o ? ` I do have ${sayDay(o.day)} at ${o.slots.slice(0, 3).map(say).join(', ').replace(/, ([^,]*)$/, ' or $1')}.` : ''; };\nif (st < now.startOf('day')) return [{ json: { bookOk: false, speak: `${st.toFormat('LLLL d')} has already passed.${alt()}` } }];\nif (st < now.plus({ minutes: notice })) return [{ json: { bookOk: false, speak: `That time is too soon for us to prepare.${alt()}` } }];\nif (!isOpenDay(st) || !inHours(st, en)) return [{ json: { bookOk: false, speak: `We are not open then.${alt()}` } }];\nif (!isFree(st, en)) return [{ json: { bookOk: false, speak: `That time was just taken.${alt()}` } }];\nreturn [{ json: {\n  bookOk: true, name, phone, email, service, notes: String(a.notes || '').trim(),\n  start: st.toISO(), end: en.toISO(), whenText: `${st.toFormat('cccc, LLLL d')} at ${say(st)}`,\n  speak: `You're all set, ${name.split(' ')[0]}. I've booked your ${service.toLowerCase()} for ${sayDay(st)} at ${say(st)}.${email ? ' A confirmation is on its way to your email.' : ''}`,\n} }];\n"
+      },
+      "id": "febc4095-47e0-4a0c-9385-d817af1c0c0c",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5a1cc42b-bd7d-431d-a5f9-4fff7e905789",
+              "leftValue": "={{ $json.bookOk }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "140f0820-2d5e-4a65-9901-c4e3176086a4",
+      "name": "Book It?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Your Settings').first().json.calendarId }}"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "description": "=Booked by the AI receptionist.\nName: {{ $json.name }}\nPhone: {{ $json.phone }}\nEmail: {{ $json.email }}\nNotes: {{ $json.notes }}",
+          "summary": "={{ $json.service }}: {{ $json.name }}"
+        }
+      },
+      "id": "870b97cf-194f-4f7a-8122-edbf98d05957",
+      "name": "Create Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2160,
+        -240
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Bookings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Booked At": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "Name": "={{ $('Decide').first().json.name }}",
+            "Phone": "={{ $('Decide').first().json.phone }}",
+            "Email": "={{ $('Decide').first().json.email }}",
+            "Service": "={{ $('Decide').first().json.service }}",
+            "When": "={{ $('Decide').first().json.whenText }}",
+            "Notes": "={{ $('Decide').first().json.notes }}",
+            "Event Link": "={{ $('Create Event').first().json.htmlLink || '' }}",
+            "Booked Via": "={{ $('Read The Request').first().json.platform }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Booked At",
+              "displayName": "Booked At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Service",
+              "displayName": "Service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "When",
+              "displayName": "When",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Notes",
+              "displayName": "Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Event Link",
+              "displayName": "Event Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Booked Via",
+              "displayName": "Booked Via",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "a0aabacf-6bf9-428e-b0f3-b078d38fa6a1",
+      "name": "Save Booking",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        2400,
+        -256
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9b917456-d8e5-4102-ab5d-11d063a16390",
+              "leftValue": "={{ !!$('Decide').first().json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "f2f1c866-4a33-4ac6-a6bf-6435b05ccb8e",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Decide').first().json.email }}",
+        "subject": "=Your appointment on {{ $('Decide').first().json.whenText }}",
+        "emailType": "text",
+        "message": "=Hi {{ $('Decide').first().json.name.split(' ')[0] }},\n\nThis confirms your {{ $('Decide').first().json.service.toLowerCase() }} with {{ $('Your Settings').first().json.businessName }} on {{ $('Decide').first().json.whenText }}.\n\nNeed to change it? Just reply to this email.\n\nSee you soon,\n{{ $('Your Settings').first().json.businessName }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "={{ $('Your Settings').first().json.businessName }}"
+        }
+      },
+      "id": "7cf3d46a-56c5-49d1-9a05-068a3e229e6c",
+      "name": "Email Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2880,
+        -336
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "68c6c899-c2eb-440e-9cc1-4ee95cf8b455",
+              "name": "speak",
+              "value": "={{ $('Decide').first().json.speak }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "421ce439-0ef1-4cd3-915d-26967f830719",
+      "name": "Say Booked",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3120,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "144c40be-2e5d-45d3-b5db-e524085e0a7b",
+              "name": "speak",
+              "value": "=I'm having trouble reaching the calendar right now. Let me take your name and number and the team will call you back to book.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "79015c08-405c-4dc9-9b25-f54fb30daafe",
+      "name": "Calendar Trouble",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1920,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Checks a message has enough to call the person back, and shapes the row and the owner's email.\nconst r = $('Read The Request').first().json, a = r.args;\nconst name = String(a.name || a.customer_name || '').trim(), phone = String(a.phone || a.phone_number || '').trim();\nconst reason = String(a.reason || a.message || a.notes || '').trim();\nif (!phone) return [{ json: { ok: false, speak: 'What number should we call you back on?' } }];\nreturn [{ json: { ok: true, name: name || 'Unknown caller', phone, reason: reason || '(no details given)', platform: r.platform,\n  receivedAt: $now.toFormat('yyyy-MM-dd HH:mm'),\n  speak: `Thanks${name ? ', ' + name.split(' ')[0] : ''}. I've passed your message to the team and someone will call you back on ${phone}.` } }];\n"
+      },
+      "id": "1d5df3c4-d039-4e6b-933d-deb073d129a4",
+      "name": "Check The Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "29e90bcd-4b57-4629-b06e-33c80d9d142f",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0552df4d-bf1b-489e-9aca-56f565c1b0a0",
+      "name": "Got A Number?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Messages"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Received At": "={{ $json.receivedAt }}",
+            "Name": "={{ $json.name }}",
+            "Phone": "={{ $json.phone }}",
+            "Message": "={{ $json.reason }}",
+            "Via": "={{ $json.platform }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Received At",
+              "displayName": "Received At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Via",
+              "displayName": "Via",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "ec9d55fd-1a44-407a-a65e-183a36d9333c",
+      "name": "Save Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        1680,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Your Settings').first().json.ownerEmail }}",
+        "subject": "=Call back {{ $('Check The Message').first().json.name }} on {{ $('Check The Message').first().json.phone }}",
+        "emailType": "text",
+        "message": "=New message from the AI receptionist.\n\nName: {{ $('Check The Message').first().json.name }}\nPhone: {{ $('Check The Message').first().json.phone }}\nMessage: {{ $('Check The Message').first().json.reason }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "={{ $('Your Settings').first().json.businessName }}"
+        }
+      },
+      "id": "cc1aecd5-e2a6-4383-901f-e0970500c3e1",
+      "name": "Email The Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1920,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ede9a010-fffd-4dce-90cb-7a87a49de8a9",
+              "name": "speak",
+              "value": "={{ $('Check The Message').first().json.speak }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6bd773c4-187d-4ce6-bbd4-28fc4593d00d",
+      "name": "Say Message Saved",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2160,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shapes the end-of-call report into a log row and a short email for the owner.\nconst r = $('Read The Request').first().json, a = r.args;\nconst transcript = String(a.transcript || '');\nreturn [{ json: { endedAt: $now.toFormat('yyyy-MM-dd HH:mm'), callerNumber: String(a.caller || a.phone || 'unknown'), durationSeconds: a.durationSeconds || '',\n  summary: String(a.summary || '').trim() || '(no summary from the voice platform)', transcript: transcript.slice(0, 4000), platform: r.platform, speak: 'ok' } }];\n"
+      },
+      "id": "8f35a925-73f8-440d-aa54-a61eaa3bc866",
+      "name": "Shape The Call Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Call Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Ended At": "={{ $json.endedAt }}",
+            "Caller": "={{ $json.callerNumber }}",
+            "Seconds": "={{ $json.durationSeconds }}",
+            "Summary": "={{ $json.summary }}",
+            "Transcript": "={{ $json.transcript }}",
+            "Via": "={{ $json.platform }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Ended At",
+              "displayName": "Ended At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caller",
+              "displayName": "Caller",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Seconds",
+              "displayName": "Seconds",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Transcript",
+              "displayName": "Transcript",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Via",
+              "displayName": "Via",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "7201590f-bf29-4a8a-b407-d2f0ca5abd3f",
+      "name": "Save Call",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        1440,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Your Settings').first().json.ownerEmail }}",
+        "subject": "=Call summary: {{ $('Shape The Call Log').first().json.callerNumber }}",
+        "emailType": "text",
+        "message": "=A call just ended.\n\nCaller: {{ $('Shape The Call Log').first().json.callerNumber }}\nLength: {{ $('Shape The Call Log').first().json.durationSeconds }} seconds\n\nSummary:\n{{ $('Shape The Call Log').first().json.summary }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "={{ $('Your Settings').first().json.businessName }}"
+        }
+      },
+      "id": "ee49fa9d-5221-40e8-bfce-9f75ebbae564",
+      "name": "Email Call Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1680,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "601a42af-d861-44ec-98fb-e218e48d2669",
+              "name": "speak",
+              "value": "=ok",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "82fde445-def1-44ce-a755-ca741957ab4b",
+      "name": "Say OK",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1920,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "96218304-f666-47e8-a84e-745b769c2f73",
+              "name": "speak",
+              "value": "=I can check open times, book an appointment, or take a message for the team.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05b69e70-6bc7-4786-89c4-45fed23e1ac2",
+      "name": "Say What I Can Do",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Answers in the shape each platform expects. Vapi wants results[] keyed by the tool call id; the others take any JSON.\nconst r = $('Read The Request').first().json;\nlet speak = String($json.speak || 'Done.');\nspeak = speak.charAt(0).toUpperCase() + speak.slice(1);                    // \"tomorrow I have...\" -> \"Tomorrow I have...\"\nreturn [{ json: r.platform === 'vapi' ? { results: [{ toolCallId: r.toolCallId, result: speak }] } : { result: speak } }];\n"
+      },
+      "id": "5e940cd0-85f1-4b48-973e-ae66b5e05cd1",
+      "name": "Format Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "06252415-6ce9-46f3-92b0-ac9b6bda3602",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## AI Voice Receptionist (the n8n side)\nYour voice platform (ElevenLabs, Vapi or Retell) talks to the caller. When it needs to look something up it calls this webhook. Four tools: **check_availability**, **book_appointment**, **take_message**, and **call_summary** after the call.\n\n**Setup**\n1. Google Sheet with tabs **Bookings**, **Messages**, **Call Log** (headers in the README). Paste its URL into the 3 Sheets nodes.\n2. Connect Google Calendar, Google Sheets and Gmail.\n3. Fill **Your Settings**: hours, time zone, a **secretKey**.\n4. Activate, copy the Production URL of **Call Comes In**, and add the tools on your voice platform (README has the exact JSON).\n5. Send the test requests in the README before you take a real call.",
+        "height": 360,
+        "width": 600,
+        "color": 5
+      },
+      "id": "fdabe21a-d64e-4e34-b875-c33204c2eb05",
+      "name": "Note: START HERE",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -560
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Your Settings\nOpen days, hours and appointment length decide the slots. **minimumNoticeMinutes** stops same-minute bookings. **secretKey**: every request must send it as header `x-receptionist-key` or `?key=`.",
+        "width": 380,
+        "color": 7
+      },
+      "id": "4fc40546-f2a6-4f1e-acf7-ce7d669e4ae8",
+      "name": "Note: Settings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Check and book\nOne calendar read covers the requested day and the next week. A booking is re-checked against the live calendar right before it is created, so two callers can not take the same slot. If the time is taken, the reply offers the nearest open times.",
+        "height": 136,
+        "width": 520,
+        "color": 7
+      },
+      "id": "61fafc8d-0a93-4170-a747-82ef9ff466ee",
+      "name": "Note: Booking",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        -320
+      ]
+    }
+  ],
+  "connections": {
+    "Call Comes In": {
+      "main": [
+        [
+          {
+            "node": "Your Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Your Settings": {
+      "main": [
+        [
+          {
+            "node": "Read The Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read The Request": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "What Do They Want?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: Not Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "What Do They Want?": {
+      "main": [
+        [
+          {
+            "node": "Plan The Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan The Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check The Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape The Call Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Say What I Can Do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan The Search": {
+      "main": [
+        [
+          {
+            "node": "Read Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Calendar": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Calendar Trouble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Book It?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book It?": {
+      "main": [
+        [
+          {
+            "node": "Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Event": {
+      "main": [
+        [
+          {
+            "node": "Save Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Calendar Trouble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Booking": {
+      "main": [
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "Email Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Say Booked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Say Booked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Say Booked": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Trouble": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check The Message": {
+      "main": [
+        [
+          {
+            "node": "Got A Number?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Got A Number?": {
+      "main": [
+        [
+          {
+            "node": "Save Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Message": {
+      "main": [
+        [
+          {
+            "node": "Email The Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email The Owner": {
+      "main": [
+        [
+          {
+            "node": "Say Message Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Say Message Saved": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape The Call Log": {
+      "main": [
+        [
+          {
+            "node": "Save Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Call": {
+      "main": [
+        [
+          {
+            "node": "Email Call Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Call Summary": {
+      "main": [
+        [
+          {
+            "node": "Say OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Say OK": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Say What I Can Do": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "America/New_York"
+  }
+}

@@ -1,0 +1,929 @@
+{
+  "name": "Lead Follow-up System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "1d63dfcb-dfe8-45ed-966a-698e6adc1d7d",
+      "name": "Every Morning at 9",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "56ee66e0-210c-4f9f-b1a9-353a7997b702",
+      "name": "Test Run (click Execute)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0f9151f1-933c-4a99-92eb-545c1185e0e7",
+              "name": "yourName",
+              "value": "Your Name",
+              "type": "string"
+            },
+            {
+              "id": "b3dcb1d7-4ddf-4421-a4da-675fb1e37378",
+              "name": "businessName",
+              "value": "Your Business Name",
+              "type": "string"
+            },
+            {
+              "id": "bce2a8e2-3c07-4e6d-a7dd-b754ba31aadc",
+              "name": "whatYouOffer",
+              "value": "home remodeling",
+              "type": "string"
+            },
+            {
+              "id": "7a9bbf79-e4b7-4cb6-a7e6-cbd34b01490a",
+              "name": "bookingLink",
+              "value": "https://your-booking-link.com",
+              "type": "string"
+            },
+            {
+              "id": "ddaed180-7ea5-466f-9bc2-9f9d79b3f87a",
+              "name": "ownerEmail",
+              "value": "you@yourbusiness.com",
+              "type": "string"
+            },
+            {
+              "id": "cedfbd00-2231-4b9d-be8a-445ce70dd00f",
+              "name": "followUpDays",
+              "value": "0,2,5,10",
+              "type": "string"
+            },
+            {
+              "id": "33d11fb6-9720-4103-ad37-0a3e9b14029e",
+              "name": "dailyLimit",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "f444cce6-3171-4a14-b00d-11f6dade83ae",
+              "name": "useAI",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "644bc5f8-cd44-444c-b03e-3fc24fac50fa",
+      "name": "Your Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "options": {}
+      },
+      "id": "b0d684fe-b722-4835-98f2-bf8c84d4975c",
+      "name": "Read Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        480,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Picks the leads that are due today. Settings come from \"Your Settings\", rows from \"Read Leads\".\nconst s = $('Your Settings').first().json;\nconst ladder = String(s.followUpDays || '0,2,5,10').split(',').map(x => parseInt(String(x).trim(), 10)).filter(n => !isNaN(n) && n >= 0);\nconst cap = Math.max(1, Math.min(200, parseInt(s.dailyLimit, 10) || 20));\nconst today = $now.toFormat('yyyy-MM-dd');\nconst emailOk = (e) => /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(e);\n// Dates may come back as text, as a typed date, or as a spreadsheet serial number: turn all of them into YYYY-MM-DD.\nconst toISO = (v) => {\n  if (v === undefined || v === null || v === '') return '';\n  if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);\n  const t = String(v).trim();\n  const m = t.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})/);\n  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;\n  const p = Date.parse(t);\n  if (isNaN(p)) return '';\n  const d = new Date(p);\n  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;\n};\nconst due = [];\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  if (!r.row_number) continue;\n  const email = String(r['Email'] || '').trim().toLowerCase();\n  const status = String(r['Status'] || '').trim().toLowerCase();\n  const step = parseInt(r['Step'], 10) || 0;\n  const next = toISO(r['Next Follow-up']);\n  if (!emailOk(email)) continue;\n  if (!['', 'new', 'contacted'].includes(status)) continue;   // Replied, Booked, Stop and Done are left alone\n  if (step >= ladder.length) continue;                          // this lead has had every email\n  if (next && next > today) continue;                           // not due yet\n  due.push({\n    row_number: r.row_number, name: String(r['Name'] || '').trim(), email,\n    interest: String(r['Interest'] || '').trim(), source: String(r['Source'] || '').trim(),\n    step, totalSteps: ladder.length, isLast: step === ladder.length - 1,\n    lastContacted: toISO(r['Last Contacted']), today,\n    nextGapDays: step + 1 < ladder.length ? Math.max(1, ladder[step + 1] - ladder[step]) : 0,\n    // what the row becomes once this email is reserved, and what it was, so a failed send can be undone\n    newStep: step + 1, newStatus: step === ladder.length - 1 ? 'Done' : 'Contacted',\n    nextFollowUp: step === ladder.length - 1 ? '' : $now.plus({ days: step + 1 < ladder.length ? Math.max(1, ladder[step + 1] - ladder[step]) : 0 }).toFormat('yyyy-MM-dd'),\n    prevStatus: String(r['Status'] || ''), prevStep: String(r['Step'] ?? ''), prevLast: String(r['Last Contacted'] || ''), prevNext: String(r['Next Follow-up'] || ''),\n  });\n  if (due.length >= cap) break;\n}\nif (!due.length) return [];\n// One inbox search covers every due lead, so Gmail is asked once per run, not once per lead.\nconst replyQuery = 'from:(' + due.map(d => d.email).join(' OR ') + ') newer_than:90d';\nreturn due.map(d => ({ json: { ...d, replyQuery } }));\n"
+      },
+      "id": "6e72bdb2-abac-4cca-8e72-bd5db5d5b742",
+      "name": "Pick Due Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "limit": 100,
+        "filters": {
+          "q": "={{ $json.replyQuery }}"
+        }
+      },
+      "id": "64809943-ba5a-4fc7-b018-00c27625cff9",
+      "name": "Search Inbox For Replies",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        960,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Joins the inbox search to the due leads: a lead has replied if a message FROM their exact address arrived\n// after we last emailed them. \"STOP\" style replies are treated as an opt-out.\nconst due = $('Pick Due Leads').all().map(i => i.json);\nconst msgs = $input.all().map(i => i.json).filter(m => m && Object.keys(m).length);\nconst addrs = (v) => ((typeof v === 'string' ? v : JSON.stringify(v || '')).toLowerCase().match(/[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}/g) || []);\nconst fromOf = (m) => {\n  if (m.From !== undefined) return addrs(m.From);\n  if (m.from !== undefined) return addrs(m.from);\n  const h = ((m.payload && m.payload.headers) || []).find(x => String(x.name).toLowerCase() === 'from');\n  return addrs(h ? h.value : '');\n};\nconst timeOf = (m) => { if (m.internalDate) return Number(m.internalDate); const t = Date.parse(m.date || m.Date || ''); return isNaN(t) ? NaN : t; };\nconst textOf = (m) => String(m.snippet || m.text || '').replace(/\\s+/g, ' ').trim();\nconst stopWords = /^\\s*(stop|unsubscribe|remove me|opt out|opt-out)\\b/i;\nreturn due.map(l => {\n  const since = l.lastContacted ? Date.parse(l.lastContacted + 'T00:00:00Z') - 86400000 : NaN;  // a day of slack for time zones\n  const hits = l.step > 0 ? msgs.filter(m => fromOf(m).includes(l.email) && (isNaN(timeOf(m)) || isNaN(since) || timeOf(m) >= since)) : [];\n  hits.sort((a, b) => (timeOf(b) || 0) - (timeOf(a) || 0));\n  const snippet = hits[0] ? textOf(hits[0]).slice(0, 300) : '';\n  return { json: { ...l, replied: hits.length > 0, optOut: hits.length > 0 && stopWords.test(snippet), replySnippet: snippet } };\n});\n"
+      },
+      "id": "07e0a6ec-2e2a-4192-912b-bba984bd9697",
+      "name": "Match Replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "862b3411-e734-4272-9e16-940f7ab6c8bb",
+              "leftValue": "={{ $json.replied }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "5a3d0d08-1e03-45c5-9f26-90acb244dc21",
+      "name": "Replied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "={{ $json.optOut ? 'Stop' : 'Replied' }}",
+            "Last Reply": "={{ $json.today }}: {{ $json.replySnippet }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Reply",
+              "displayName": "Last Reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "5f959db3-c9a0-456b-89f9-13f0cdfa8a0e",
+      "name": "Mark As Replied",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        1680,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Your Settings').first().json.ownerEmail }}",
+        "subject": "={{ $('Match Replies').item.json.optOut ? $('Match Replies').item.json.name + ' asked to stop emails' : $('Match Replies').item.json.name + ' replied to your follow-up' }}",
+        "emailType": "text",
+        "message": "={{ $('Match Replies').item.json.name }} ({{ $('Match Replies').item.json.email }}) wrote back:\n\n\"{{ $('Match Replies').item.json.replySnippet }}\"\n\n{{ $('Match Replies').item.json.optOut ? 'They are marked Stop in your sheet and will not get another email.' : 'They are marked Replied in your sheet, so the follow-ups stop here. Answer them from your inbox.' }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "65e887b5-7c07-4cc1-a431-7820beeaaac7",
+      "name": "Tell Me They Replied",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1920,
+        -112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "521ec349-646b-4655-8037-74c30efc61ab",
+              "leftValue": "={{ $('Your Settings').first().json.useAI }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "d7b6bac5-f9ce-4454-a164-6eae10f7218e",
+      "name": "Use AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You write short, warm follow-up emails for a small business.\n\nBusiness: {{ $('Your Settings').first().json.businessName }}\nSender: {{ $('Your Settings').first().json.yourName }}\nWhat the business offers: {{ $('Your Settings').first().json.whatYouOffer }}\nBooking link: {{ $('Your Settings').first().json.bookingLink || 'none, so ask them to reply with a day and time' }}\n\nLead name: {{ $('Match Replies').item.json.name || 'there' }} (use the first name only)\nThey asked about: {{ $('Match Replies').item.json.interest || 'our services' }}\nThis is email {{ $('Match Replies').item.json.step + 1 }} of {{ $('Match Replies').item.json.totalSteps }}. {{ $('Match Replies').item.json.step === 0 ? 'It is the first reply to a brand new inquiry: thank them and suggest a short call.' : ($('Match Replies').item.json.isLast ? 'It is the last email: say politely that you will stop following up and that they can reply any time.' : 'It is a gentle follow-up: do not repeat the earlier email, keep it light.') }}\n\nRules: under 90 words. Plain text. No emojis. No em dashes. No placeholders in brackets. No signature, it is added for you. One clear next step. Never invent prices, discounts, dates, referrals or facts. Do not sign off or add your name.\nReply in exactly this format, nothing before or after it:\nSUBJECT: <subject line>\n<email body>",
+        "batching": {}
+      },
+      "id": "4d210740-0ea9-4678-ba26-73f162817959",
+      "name": "Write With AI",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "position": [
+        2160,
+        128
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.6
+        }
+      },
+      "id": "587f3451-3be7-4bc5-a9c4-847312bd0ab5",
+      "name": "Gemini (free tier)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Turns the AI draft (or a ready-made template when AI is off or fails) into the email, and works out what to\n// write back to the sheet. Runs once per lead.\nconst s = $('Your Settings').first().json;\nconst lead = $('Match Replies').item.json;\nconst first = (lead.name.split(/\\s+/)[0] || 'there');\nconst you = String(s.yourName || '').trim() || 'The team';\nconst biz = String(s.businessName || '').trim();\nconst offer = lead.interest || String(s.whatYouOffer || '').trim() || 'what you asked about';\nconst link = String(s.bookingLink || '').trim();\nconst linkLine = link ? `You can pick a time that suits you here: ${link}` : 'Just reply with a day and time that suits you.';\nconst T = [\n  [`Thanks for reaching out, ${first}`, `Hi ${first},\\n\\nThanks for your interest in ${offer}. I'd love to hear a little more about what you have in mind so I can point you in the right direction.\\n\\nWould a quick 15-minute call this week work? ${linkLine}`],\n  [`Quick follow-up, ${first}`, `Hi ${first},\\n\\nJust bringing this back to the top of your inbox. Are you still looking into ${offer}? I can answer any questions, no pressure at all.\\n\\n${linkLine}`],\n  [`Still thinking about ${offer}?`, `Hi ${first},\\n\\nI know things get busy. If ${offer} is still on your list, I can walk you through the options in a short call.\\n\\n${linkLine}`],\n  [`Should I close your file, ${first}?`, `Hi ${first},\\n\\nI haven't heard back, so I'll assume the timing isn't right and I'll stop following up. If anything changes, just reply to this email and I'll pick it up from there.`],\n];\nlet [subject, body] = T[lead.isLast ? 3 : Math.min(lead.step, 2)];\nlet usedAI = false;\nconst ai = String($json.text || '').trim();\nif (ai) {\n  const clean = ai.replace(/```[a-z]*/gi, '').replace(/\\*\\*/g, '').trim();\n  const m = clean.match(/^\\s*subject\\s*:\\s*(.+)\\r?\\n([\\s\\S]+)$/i);\n  if (m) {\n    const sub = m[1].trim().replace(/^[\"']|[\"']$/g, ''), bod = m[2].trim();\n    const placeholder = /\\[[^\\]]{2,30}\\]|\\{\\{|\\}\\}/.test(sub + bod);\n    if (!placeholder && sub.length >= 3 && sub.length <= 120 && bod.length >= 40 && bod.length <= 1500) { subject = sub; body = bod; usedAI = true; }\n  }\n}\n// The AI sometimes signs off anyway: cut its sign-off so the email ends with one signature, ours.\nbody = body.replace(/\\n\\s*(best|best regards|kind regards|warm regards|regards|thanks|thank you|cheers|sincerely|talk soon)[,!.]?\\s*(\\n[\\s\\S]{0,80})?$/i, '').trim();\n{                                                                       // and a closing like \"Have a great week,\\nSam\"\n  const L = body.split('\\n'); while (L.length && !L[L.length - 1].trim()) L.pop();\n  const last = (L[L.length - 1] || '').trim();\n  if (last && last.length <= 40 && !/[.?!:]$/.test(last) && last.split(/\\s+/).length <= 4) {\n    let i = L.length - 2; while (i >= 0 && !L[i].trim()) i--;\n    if (i >= 0 && /,\\s*$/.test(L[i]) && L[i].trim().length <= 60) L.splice(i);\n  }\n  body = L.join('\\n').trim();\n}\n// A blank line after the greeting, whatever the AI did.\nbody = body.replace(/^(\\s*(hi|hello|hey|dear)\\b[^\\n]{0,60},)[ \\t]*\\n(?!\\s*\\n)/i, '$1\\n\\n');\nbody = body.replace(/\\s*\\u2014\\s*/g, ', ');                         // no em dashes\nconst sign = `\\n\\nBest,\\n${you}${biz ? '\\n' + biz : ''}`;\nconst optOut = `\\n\\nIf you'd rather not hear from me, just reply STOP.`;\nreturn { json: {\n  row_number: lead.row_number, to: lead.email, name: lead.name, subject, body: body + sign + optOut, usedAI,\n  step: lead.step, newStep: lead.step + 1, newStatus: lead.isLast ? 'Done' : 'Contacted',\n  nextFollowUp: lead.isLast ? '' : $now.plus({ days: lead.nextGapDays }).toFormat('yyyy-MM-dd'), today: lead.today,\n} };\n"
+      },
+      "id": "7744718a-0fbc-49ef-bda7-c1e58a93d965",
+      "name": "Build Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "={{ $('Your Settings').first().json.yourName }}"
+        }
+      },
+      "id": "55463a34-2e00-4999-a331-1d338ceefeeb",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2672,
+        240
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "={{ $json.newStatus }}",
+            "Step": "={{ $json.newStep }}",
+            "Last Contacted": "={{ $json.today }}",
+            "Next Follow-up": "={{ $json.nextFollowUp }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Step",
+              "displayName": "Step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Contacted",
+              "displayName": "Last Contacted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Next Follow-up",
+              "displayName": "Next Follow-up",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "c9aaec76-5c0b-490f-a2b5-1bf49c6ab598",
+      "name": "Reserve Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        1680,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Match Replies').item.json.row_number }}",
+            "Status": "={{ $('Match Replies').item.json.prevStatus }}",
+            "Step": "={{ $('Match Replies').item.json.prevStep }}",
+            "Last Contacted": "={{ $('Match Replies').item.json.prevLast }}",
+            "Next Follow-up": "={{ $('Match Replies').item.json.prevNext }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Step",
+              "displayName": "Step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Contacted",
+              "displayName": "Last Contacted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Next Follow-up",
+              "displayName": "Next Follow-up",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "71c83e24-7d86-4d39-a6ee-12186b4a313d",
+      "name": "Undo Reserve",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "position": [
+        2912,
+        368
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// One summary email to the owner after the run: who was emailed, and which email of the ladder it was.\nconst sent = $('Build Email').all().map(i => i.json);\n// Each item that came out of Send Email points back (pairedItem) to the email it sent.\nconst ok = new Set($input.all().map(i => { const p = Array.isArray(i.pairedItem) ? i.pairedItem[0] : i.pairedItem; return p ? p.item : -1; }));\nconst rows = sent.filter((r, idx) => ok.has(idx));\nconst label = (r) => r.newStatus === 'Done' ? 'last email' : (r.step === 0 ? 'first reply' : `follow-up ${r.step}`);\nconst lines = rows.map(r => `- ${r.name || r.to} (${r.to}): ${label(r)}${r.usedAI ? '' : ' (template)'}`);\nreturn [{ json: {\n  subject: `Lead follow-up: ${rows.length} email${rows.length === 1 ? '' : 's'} sent today`,\n  body: `Your lead follow-up ran today.\\n\\n${lines.join('\\n') || 'Nobody was due.'}\\n\\nLeads who reply are sent to you separately the moment the next run sees it, and their follow-ups stop.`,\n} }];\n"
+      },
+      "id": "21d97655-b60d-432c-9e84-ea6c4bf8f5c4",
+      "name": "Build Daily Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Your Settings').first().json.ownerEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ced205cf-41c3-4429-9201-a7130081e779",
+      "name": "Email Me The Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3152,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Your Settings').first().json.ownerEmail }}",
+        "subject": "=Follow-up to {{ $('Build Email').item.json.to }} did not send",
+        "emailType": "text",
+        "message": "=Gmail refused the follow-up to {{ $('Build Email').item.json.name }} ({{ $('Build Email').item.json.to }}). Their row was put back as it was, so tomorrow's run will try again. Gmail said: {{ ($('Send Email').item.json.error || {}).message || JSON.stringify($('Send Email').item.json.error || 'no details') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "65da7ec0-0af3-40bf-a0a5-e6bd8e3d0098",
+      "name": "Tell Me A Send Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3152,
+        368
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Lead Follow-up System\nEmails every new lead within a day, then follows up on day 2, 5 and 10 until they reply. The moment someone replies, their follow-ups stop and you get an email.\n\n**Setup (10 minutes)**\n1. Make a Google Sheet with a tab called **Leads** and these headers in row 1:\n`Name | Email | Phone | Source | Interest | Status | Step | Last Contacted | Next Follow-up | Notes | Last Reply`\n2. Paste its URL into the four Google Sheets nodes.\n3. Connect Gmail, Google Sheets and Google Gemini (free key from aistudio.google.com).\n4. Fill in **Your Settings**.\n5. Add a test lead with your own email, click **Execute workflow**, check your inbox.\n6. Turn the workflow on.",
+        "height": 364,
+        "width": 520,
+        "color": 5
+      },
+      "id": "58263875-d064-4d8a-ad9c-987c1975e863",
+      "name": "Note: START HERE",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Your Settings\n**followUpDays**: days after the first email for each follow-up. `0,2,5,10` = 4 emails.\n**dailyLimit**: max emails per run, keeps your Gmail safe.\n**useAI**: false = use the built-in templates, no AI key needed.",
+        "height": 172,
+        "width": 360,
+        "color": 7
+      },
+      "id": "a33e27b8-f590-489a-86de-121fbe243e06",
+      "name": "Note: Your Settings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        512,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Did they reply?\nOne Gmail search per run looks for mail **from** each due lead. A reply after your last email stops the follow-ups (Status = Replied). A reply that starts with STOP sets Status = Stop. Rows marked Replied, Booked, Stop or Done are never emailed.",
+        "height": 172,
+        "width": 420,
+        "color": 7
+      },
+      "id": "dbae123f-0c63-47f5-a8d9-1cca7c7c3149",
+      "name": "Note: Reply check",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        896,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Writing the email\nGemini's free tier writes each email. If AI is off, out of quota or returns something odd, a ready-made template is used instead, so a lead never misses an email. Every email ends with an easy STOP line.",
+        "height": 156,
+        "width": 420,
+        "color": 7
+      },
+      "id": "7279b68e-f8c3-488c-8902-2288ede203f7",
+      "name": "Note: AI",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2128,
+        -160
+      ]
+    }
+  ],
+  "connections": {
+    "Every Morning at 9": {
+      "main": [
+        [
+          {
+            "node": "Your Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Run (click Execute)": {
+      "main": [
+        [
+          {
+            "node": "Your Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Your Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Leads": {
+      "main": [
+        [
+          {
+            "node": "Pick Due Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Due Leads": {
+      "main": [
+        [
+          {
+            "node": "Search Inbox For Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Inbox For Replies": {
+      "main": [
+        [
+          {
+            "node": "Match Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Replies": {
+      "main": [
+        [
+          {
+            "node": "Replied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark As Replied": {
+      "main": [
+        [
+          {
+            "node": "Tell Me They Replied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write With AI": {
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Row": {
+      "main": [
+        [
+          {
+            "node": "Use AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "Email Me The Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo Reserve": {
+      "main": [
+        [
+          {
+            "node": "Tell Me A Send Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replied?": {
+      "main": [
+        [
+          {
+            "node": "Mark As Replied",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reserve Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use AI?": {
+      "main": [
+        [
+          {
+            "node": "Write With AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Undo Reserve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (free tier)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write With AI",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "America/New_York"
+  }
+}
